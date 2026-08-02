@@ -12,9 +12,9 @@ on:
       userland:
         description: "Userland release"
         required: false
-        default: "noble"
+        default: "trixie"
         type: choice
-        options: ["noble", "bookworm", "trixie", "jammy"]
+        options: ["trixie", "noble", "bookworm", "jammy"]
       kernel_branch:
         description: "Kernel branch"
         required: false
@@ -44,7 +44,7 @@ jobs:
     env:
       BOARD: radxa-cubie-a5e
       BRANCH: ${{ inputs.kernel_branch || 'current' }}
-      RELEASE: ${{ inputs.userland || 'noble' }}
+      RELEASE: ${{ inputs.userland || 'trixie' }}
       BUILD_MINIMAL: ${{ inputs.build_minimal || 'no' }}
 
     steps:
