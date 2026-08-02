@@ -1,0 +1,134 @@
+name: "Build: Radxa Cubie A5E"
+
+# Images are built for releases only. Publishing a release builds the board
+# image from the exact commit the release tag points at and attaches the
+# resulting image to that same release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      userland:
+        description: "Userland release"
+        required: false
+        default: "noble"
+        type: choice
+        options: ["noble", "bookworm", "trixie", "jammy"]
+      kernel_branch:
+        description: "Kernel branch"
+        required: false
+        default: "current"
+        type: choice
+        options: ["current", "edge"]
+      build_minimal:
+        description: "Minimal image"
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-radxa-cubie-a5e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    env:
+      BOARD: radxa-cubie-a5e
+      BRANCH: ${{ inputs.kernel_branch || 'current' }}
+      RELEASE: ${{ inputs.userland || 'noble' }}
+      BUILD_MINIMAL: ${{ inputs.build_minimal || 'no' }}
+
+    steps:
+      - name: Reclaim runner disk space
+        run: |
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/local/share/boost \
+            /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout build framework
+        # On a release event this is the commit the release tag points at.
+        uses: actions/checkout@v4
+
+      - name: Move cache and scratch space to the large /mnt volume
+        run: |
+          for dir in cache .tmp; do
+            sudo mkdir -p "/mnt/armbian/${dir}"
+            sudo chown "$(id -u):$(id -g)" "/mnt/armbian/${dir}"
+            ln -s "/mnt/armbian/${dir}" "${dir}"
+          done
+          df -h / /mnt
+
+      - name: Build Armbian image
+        run: |
+          ./compile.sh build \
+            PREFER_DOCKER=no \
+            BOARD="${BOARD}" \
+            BRANCH="${BRANCH}" \
+            RELEASE="${RELEASE}" \
+            BUILD_MINIMAL="${BUILD_MINIMAL}" \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            EXPERT=yes \
+            SHARE_LOG=no \
+            COMPRESS_OUTPUTIMAGE=sha,xz \
+            IMAGE_XZ_COMPRESSION_RATIO=6
+
+      - name: Show build output
+        run: |
+          ls -lh output/images/ || true
+          df -h / /mnt
+
+      - name: Upload image as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-${{ env.BOARD }}-${{ env.RELEASE }}-${{ env.BRANCH }}
+          path: |
+            output/images/*.img.xz
+            output/images/*.sha
+            output/images/*.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach image to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          shopt -s nullglob
+          assets=(output/images/*.img.xz output/images/*.sha output/images/*.txt)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No image produced, nothing to attach" >&2
+            exit 1
+          fi
+          printf 'Attaching: %s\n' "${assets[@]}"
+          gh release upload "${TAG}" "${assets[@]}" \
+            --clobber --repo "${GITHUB_REPOSITORY}"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: output/logs/
+          if-no-files-found: ignore
+          retention-days: 7
