@@ -1,9 +1,19 @@
 name: "Build: FriendlyElec NanoPi R28S"
 
-# Images are built from tags. Pushing a tag that names this board builds the
-# image from that exact commit and publishes it as a release with the image
-# attached. The release is created by the job itself, from GITHUB_TOKEN, so it
-# cannot trigger another workflow run in turn.
+# Publishing a release builds the image from the commit its tag points at and
+# attaches it there. The release has to exist first, and a person has to make
+# it:
+#
+#   gh release create v26.11.0-nanopi-r28s-edge.1 --target <sha> --title ...
+#
+# which creates the tag too. GITHUB_TOKEN cannot: this repository is a fork,
+# and a fork's token stays read for most things however loudly the workflow
+# asks for contents: write. Uploading an asset to a release that already
+# exists does work; POST /repos/.../releases comes back 403.
+#
+# A release event runs the workflow files from the commit its tag points at,
+# not from the default branch - so only this workflow starts, and only for
+# tags on a branch that carries it.
 #
 # The tag name picks the kernel: 'bleedingedge' in it builds 7.3, 'edge'
 # builds 7.2, anything else builds 6.18. All three are mainline.
@@ -15,9 +25,8 @@ name: "Build: FriendlyElec NanoPi R28S"
 # proves nothing about the patch itself.
 
 on:
-  push:
-    tags:
-      - "*nanopi-r28s*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       userland:
@@ -145,11 +154,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish the release and attach the image
-        if: github.event_name == 'push'
+      - name: Attach the image to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           shopt -s nullglob
           assets=(output/images/*.img.xz output/images/*.sha output/images/*.txt)
@@ -179,13 +188,10 @@ jobs:
           } > /tmp/notes.md
           cat /tmp/notes.md
 
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" \
-              --title "${title}" --notes-file /tmp/notes.md
-          else
-            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" \
-              --target "${GITHUB_SHA}" --title "${title}" --notes-file /tmp/notes.md
-          fi
+          # Only the upload is within a fork token's reach; creating or editing
+          # the release is not, so the title and notes are printed for whoever
+          # wants to paste them in rather than written from here.
+          echo "suggested title: ${title}"
 
           printf 'Attaching: %s\n' "${assets[@]}"
           gh release upload "${TAG}" "${assets[@]}" \
