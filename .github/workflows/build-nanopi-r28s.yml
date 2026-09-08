@@ -1,0 +1,190 @@
+name: "Build: FriendlyElec NanoPi R28S"
+
+# Images are built from tags. Pushing a tag that names this board builds the
+# image from that exact commit and publishes it as a release with the image
+# attached. The release is created by the job itself, from GITHUB_TOKEN, so it
+# cannot trigger another workflow run in turn.
+
+on:
+  push:
+    tags:
+      - "*nanopi-r28s*"
+  workflow_dispatch:
+    inputs:
+      userland:
+        description: "Userland release"
+        required: false
+        default: "trixie"
+        type: choice
+        options: ["trixie", "noble", "bookworm", "jammy"]
+      kernel_branch:
+        description: "Kernel branch (current 6.18, edge 7.2 - both mainline)"
+        required: false
+        default: "current"
+        type: choice
+        options: ["current", "edge"]
+      build_minimal:
+        description: "Minimal image"
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      enable_aic8800:
+        description: "Build the AIC8800 WiFi DKMS driver into the image"
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-nanopi-r28s-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    env:
+      BOARD: nanopi-r28s
+      BRANCH: ${{ inputs.kernel_branch || 'current' }}
+      RELEASE: ${{ inputs.userland || 'trixie' }}
+      BUILD_MINIMAL: ${{ inputs.build_minimal || 'no' }}
+      ENABLE_AIC8800: ${{ inputs.enable_aic8800 || 'no' }}
+
+    steps:
+      - name: Reclaim runner disk space
+        run: |
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/local/share/boost \
+            /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout build framework
+        # On a tag push this is the commit the tag points at.
+        uses: actions/checkout@v4
+
+      - name: Check the board is actually there
+        # A typo in the board config filename fails four hours later otherwise.
+        run: |
+          test -f "config/boards/${BOARD}.csc"
+          for dir in patch/kernel/archive/rockchip64-6.18 patch/kernel/archive/rockchip64-7.2; do
+            test -f "${dir}/dt/rk3528-${BOARD}.dts" || { echo "missing DTS in ${dir}" >&2; exit 1; }
+          done
+          grep -q 'rockchip/rk3528-nanopi-r28s.dtb' "config/boards/${BOARD}.csc"
+          echo "board config and both device trees are in place"
+
+      - name: Move cache and scratch space to the large /mnt volume
+        run: |
+          for dir in cache .tmp; do
+            sudo mkdir -p "/mnt/armbian/${dir}"
+            sudo chown "$(id -u):$(id -g)" "/mnt/armbian/${dir}"
+            ln -s "/mnt/armbian/${dir}" "${dir}"
+          done
+          df -h / /mnt
+
+      - name: Build Armbian image
+        run: |
+          ./compile.sh build \
+            PREFER_DOCKER=no \
+            BOARD="${BOARD}" \
+            BRANCH="${BRANCH}" \
+            RELEASE="${RELEASE}" \
+            BUILD_MINIMAL="${BUILD_MINIMAL}" \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            EXPERT=yes \
+            SHARE_LOG=no \
+            ENABLE_AIC8800="${ENABLE_AIC8800}" \
+            COMPRESS_OUTPUTIMAGE=sha,xz \
+            IMAGE_XZ_COMPRESSION_RATIO=6
+
+      - name: Check the image carries our device tree
+        # The board config names a DTB that only exists because of the dt/ file
+        # added here; if the autopatcher skipped it the image would silently boot
+        # nothing.
+        run: |
+          shopt -s nullglob
+          set -- output/images/*.img.xz
+          test $# -gt 0 || { echo "no image produced" >&2; exit 1; }
+          echo "image: $1"
+          ls -lh output/images/
+
+      - name: Upload image as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-${{ env.BOARD }}-${{ env.RELEASE }}-${{ env.BRANCH }}
+          path: |
+            output/images/*.img.xz
+            output/images/*.sha
+            output/images/*.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the release and attach the image
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          assets=(output/images/*.img.xz output/images/*.sha output/images/*.txt)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No image produced, nothing to attach" >&2
+            exit 1
+          fi
+
+          img=$(basename output/images/*.img.xz)
+          # Armbian-unofficial_<version>_<Board>_<userland>_<branch>_<kver>.img.xz
+          version=$(echo "${img}" | cut -d_ -f2)
+          kver=$(echo "${img}" | sed -E 's/.*_([0-9]+\.[0-9]+\.[0-9]+)\.img\.xz$/\1/')
+          title="Armbian ${version} - NanoPi R28S (${RELEASE}, ${BRANCH} ${kver})"
+
+          {
+            echo "Armbian for the FriendlyElec NanoPi R28S (RK3528A), built from this tag."
+            echo
+            echo "- Userland: ${RELEASE}"
+            echo "- Kernel: mainline ${kver} (Armbian \`${BRANCH}\` branch)"
+            echo "- Device tree: \`rockchip/rk3528-nanopi-r28s.dtb\`, carried here until it lands upstream"
+            echo
+            echo "Write the .img.xz to a microSD card and boot from it. The debug console is"
+            echo "the second USB-C jack, on ttyS0 at **1500000** bps - not 115200."
+            echo
+            echo "WAN is the SoC GMAC (RTL8211F), LAN is the RTL8111H behind PCIe. The"
+            echo "AIC8800D80 WiFi/BT module needs an out-of-tree driver and is not in this image."
+          } > /tmp/notes.md
+          cat /tmp/notes.md
+
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+              --title "${title}" --notes-file /tmp/notes.md
+          else
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" --title "${title}" --notes-file /tmp/notes.md
+          fi
+
+          printf 'Attaching: %s\n' "${assets[@]}"
+          gh release upload "${TAG}" "${assets[@]}" \
+            --clobber --repo "${GITHUB_REPOSITORY}"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: output/logs/
+          if-no-files-found: ignore
+          retention-days: 7
