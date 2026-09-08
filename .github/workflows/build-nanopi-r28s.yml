@@ -6,10 +6,10 @@ name: "Build: FriendlyElec NanoPi R28S"
 #
 #   gh release create v26.11.0-nanopi-r28s-edge.1 --target <sha> --title ...
 #
-# which creates the tag too. GITHUB_TOKEN cannot: this repository is a fork,
-# and a fork's token stays read for most things however loudly the workflow
-# asks for contents: write. Uploading an asset to a release that already
-# exists does work; POST /repos/.../releases comes back 403.
+# which creates the tag too. The job could create it instead, and a probe on
+# this branch showed the token is allowed to - but the first tagged build
+# died on POST /repos/.../releases with 403 anyway, unreproducibly. A
+# release that already exists takes that failure mode out of the job.
 #
 # A release event runs the workflow files from the commit its tag points at,
 # not from the default branch - so only this workflow starts, and only for
@@ -189,14 +189,16 @@ jobs:
           } > /tmp/notes.md
           cat /tmp/notes.md
 
-          # Only the upload is within a fork token's reach; creating or editing
-          # the release is not, so the title and notes are printed for whoever
-          # wants to paste them in rather than written from here.
-          echo "suggested title: ${title}"
-
+          # Attach first. The image is the point of the job; the title is not
+          # worth losing it over, so naming the release comes after and is
+          # allowed to fail.
           printf 'Attaching: %s\n' "${assets[@]}"
           gh release upload "${TAG}" "${assets[@]}" \
             --clobber --repo "${GITHUB_REPOSITORY}"
+
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --title "${title}" --notes-file /tmp/notes.md \
+            || echo "::warning::could not set the title or notes; the assets are attached"
 
       - name: Upload build logs on failure
         if: failure()
