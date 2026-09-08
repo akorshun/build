@@ -29,6 +29,24 @@ if [[ "${ENABLE_AIC8800:-no}" == "yes" ]]; then
 	enable_extension "radxa-aic8800"
 fi
 
+# mainline-kernel.conf.sh pins 7.3 to v7.3-rc1, which is what bleedingedge has
+# been building. On this board that kernel wedges the SD host: command timeouts
+# on a plain clock update, the card re-scanned in a loop, boots that take
+# minutes or hang outright. 7.2.4 with the same device tree does none of it, so
+# point bleedingedge at the newer release candidate to find out whether it is an
+# rc1 bug. Runs at 800, after the rc logic at 750, so it overrides rather than
+# races it - and it has to set KERNELSOURCE itself, because the hook that points
+# rc kernels at Linus' tree only matches the tag it pinned.
+# Remove once answered.
+function mainline_kernel_decide_version__800_nanopi_r28s_pin_rc() {
+	if [[ "${KERNEL_MAJOR_MINOR}" != "7.3" ]]; then
+		return 0
+	fi
+	declare -g KERNELBRANCH="tag:v7.3-rc2"
+	declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
+	display_alert "$BOARD" "Pinning ${KERNEL_MAJOR_MINOR} to ${KERNELBRANCH}" "info"
+}
+
 # RK3528 debug UART is UART0 (ttyS0), not UART2 (ttyS2) like other RK35xx SoCs.
 # On this board it is behind the on-board USB-UART bridge on the second Type-C
 # jack, and runs at 1500000 bps.
