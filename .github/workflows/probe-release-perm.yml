@@ -1,9 +1,9 @@
 name: "Probe: can a workflow create a release here"
 
-# Throwaway. The tagged build could attach an asset to an existing release but
-# got 403 on POST /releases, while the same GITHUB_TOKEN permissions create
-# releases fine in another fork of this account. This finds out which half of
-# that is true. Delete once answered.
+# Throwaway. The tagged build got 403 on POST /releases while attaching an
+# asset worked, and the same token creates releases fine in another fork of
+# this account - so "forks cannot" is not the explanation. Narrow it down.
+# Delete once answered.
 
 # workflow_dispatch is only offered for workflows on the default branch, and
 # this one lives on a board branch, so it runs on a push that touches itself.
@@ -21,30 +21,32 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: POST /releases, no target_commitish
+      - name: Make a tag first, the way the real run had one
         run: |
           set +e
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
-            -f tag_name=probe-perm-a -f name=probe-a -f body=probe \
-            > /tmp/a.json 2>/tmp/a.err
-          echo "exit=$?"
-          cat /tmp/a.err /tmp/a.json 2>/dev/null | head -20
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref=refs/tags/probe-perm-c -f sha="${GITHUB_SHA}" > /dev/null 2>/tmp/tag.err
+          echo "create tag exit=$?"
+          head -3 /tmp/tag.err 2>/dev/null
 
-      - name: POST /releases, with target_commitish
+      - name: gh release create on that existing tag, with --target
         run: |
           set +e
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
-            -f tag_name=probe-perm-b -f name=probe-b -f body=probe \
-            -f target_commitish="${GITHUB_SHA}" \
-            > /tmp/b.json 2>/tmp/b.err
+          printf 'probe\n' > /tmp/n.md
+          gh release create probe-perm-c --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "probe c" --notes-file /tmp/n.md
           echo "exit=$?"
-          cat /tmp/b.err /tmp/b.json 2>/dev/null | head -20
+
+      - name: gh release create on a tag that does not exist yet
+        run: |
+          set +e
+          gh release create probe-perm-d --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "probe d" --notes "probe"
+          echo "exit=$?"
 
       - name: Clean up whatever got created
         if: always()
         run: |
           set +e
-          for t in probe-perm-a probe-perm-b; do
+          for t in probe-perm-a probe-perm-b probe-perm-c probe-perm-d; do
             gh release delete "$t" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag 2>&1 | sed "s/^/[$t] /"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$t" >/dev/null 2>&1
           done
           exit 0
