@@ -5,10 +5,14 @@ name: "Build: FriendlyElec NanoPi R28S"
 # attached. The release is created by the job itself, from GITHUB_TOKEN, so it
 # cannot trigger another workflow run in turn.
 #
-# Put 'edge' in the tag name to build the 7.2 kernel instead of 6.18. That is
-# the one worth booting when the device tree changes: the copy under
-# rockchip64-7.2/dt is byte-identical to the patch headed upstream, while the
-# 6.18 copy is renamed around Armbian's older USB2 PHY node labels.
+# The tag name picks the kernel: 'bleedingedge' in it builds 7.3, 'edge'
+# builds 7.2, anything else builds 6.18. All three are mainline.
+#
+# Those are the two worth booting when the device tree changes: the copies
+# under rockchip64-7.2/dt and rockchip64-7.3/dt are byte-identical to the patch
+# headed for linux-rockchip, and 7.3 is the tree it is written against, while
+# the 6.18 copy is renamed around Armbian's older u2phy* node labels and so
+# proves nothing about the patch itself.
 
 on:
   push:
@@ -23,11 +27,11 @@ on:
         type: choice
         options: ["trixie", "noble", "bookworm", "jammy"]
       kernel_branch:
-        description: "Kernel branch (current 6.18, edge 7.2 - both mainline)"
+        description: "Kernel branch: current 6.18, edge 7.2, bleedingedge 7.3"
         required: false
         default: "current"
         type: choice
-        options: ["current", "edge"]
+        options: ["current", "edge", "bleedingedge"]
       build_minimal:
         description: "Minimal image"
         required: false
@@ -56,9 +60,9 @@ jobs:
 
     env:
       BOARD: nanopi-r28s
-      # A tag with 'edge' in its name builds the 7.2 kernel; anything else
-      # builds current (6.18). Both are mainline.
-      BRANCH: ${{ inputs.kernel_branch || (contains(github.ref_name, 'edge') && 'edge') || 'current' }}
+      # The tag name picks the kernel; see the header comment.
+      # 'bleeding' is tested before 'edge' because one contains the other.
+      BRANCH: ${{ inputs.kernel_branch || (contains(github.ref_name, 'bleeding') && 'bleedingedge') || (contains(github.ref_name, 'edge') && 'edge') || 'current' }}
       RELEASE: ${{ inputs.userland || 'trixie' }}
       BUILD_MINIMAL: ${{ inputs.build_minimal || 'no' }}
       ENABLE_AIC8800: ${{ inputs.enable_aic8800 || 'no' }}
@@ -88,7 +92,7 @@ jobs:
         # A typo in the board config filename fails four hours later otherwise.
         run: |
           test -f "config/boards/${BOARD}.csc"
-          for dir in patch/kernel/archive/rockchip64-6.18 patch/kernel/archive/rockchip64-7.2; do
+          for dir in patch/kernel/archive/rockchip64-6.18                      patch/kernel/archive/rockchip64-7.2                      patch/kernel/archive/rockchip64-7.3; do
             test -f "${dir}/dt/rk3528-${BOARD}.dts" || { echo "missing DTS in ${dir}" >&2; exit 1; }
           done
           grep -q 'rockchip/rk3528-nanopi-r28s.dtb' "config/boards/${BOARD}.csc"
