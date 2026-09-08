@@ -29,15 +29,16 @@ if [[ "${ENABLE_AIC8800:-no}" == "yes" ]]; then
 	enable_extension "radxa-aic8800"
 fi
 
-# mainline-kernel.conf.sh pins 7.3 to v7.3-rc1, which is what bleedingedge has
-# been building. On this board that kernel wedges the SD host: command timeouts
-# on a plain clock update, the card re-scanned in a loop, boots that take
-# minutes or hang outright. 7.2.4 with the same device tree does none of it, so
-# point bleedingedge at the newer release candidate to find out whether it is an
-# rc1 bug. Runs at 800, after the rc logic at 750, so it overrides rather than
-# races it - and it has to set KERNELSOURCE itself, because the hook that points
-# rc kernels at Linus' tree only matches the tag it pinned.
-# Remove once answered.
+# Armbian builds 7.3 from v7.3-rc1, which wedges the SD host on this board:
+# dw_mmc times out on a bare SDMMC_CMD_UPD_CLK, the card is rescanned in a loop,
+# and boots take minutes or hang before the rootfs appears. v7.3-rc2 does not,
+# with the same device tree - verified on the board under iozone, zero mmc
+# errors. So stay on rc2 until 7.3 is released, at which point this whole hook
+# goes away with the release-candidate handling it overrides.
+#
+# It runs at 800, after that handling at 750, so it overrides rather than races
+# it, and sets KERNELSOURCE itself because the hook that points rc kernels at
+# Linus' tree only matches the tag it pinned.
 function mainline_kernel_decide_version__800_nanopi_r28s_pin_rc() {
 	if [[ "${KERNEL_MAJOR_MINOR}" != "7.3" ]]; then
 		return 0
