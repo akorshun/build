@@ -1,0 +1,46 @@
+name: "Probe: can a workflow create a release here"
+
+# Throwaway. The tagged build could attach an asset to an existing release but
+# got 403 on POST /releases, while the same GITHUB_TOKEN permissions create
+# releases fine in another fork of this account. This finds out which half of
+# that is true. Delete once answered.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: POST /releases, no target_commitish
+        run: |
+          set +e
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
+            -f tag_name=probe-perm-a -f name=probe-a -f body=probe \
+            > /tmp/a.json 2>/tmp/a.err
+          echo "exit=$?"
+          cat /tmp/a.err /tmp/a.json 2>/dev/null | head -20
+
+      - name: POST /releases, with target_commitish
+        run: |
+          set +e
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
+            -f tag_name=probe-perm-b -f name=probe-b -f body=probe \
+            -f target_commitish="${GITHUB_SHA}" \
+            > /tmp/b.json 2>/tmp/b.err
+          echo "exit=$?"
+          cat /tmp/b.err /tmp/b.json 2>/dev/null | head -20
+
+      - name: Clean up whatever got created
+        if: always()
+        run: |
+          set +e
+          for t in probe-perm-a probe-perm-b; do
+            gh release delete "$t" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag 2>&1 | sed "s/^/[$t] /"
+          done
+          exit 0
