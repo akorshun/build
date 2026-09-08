@@ -4,6 +4,11 @@ name: "Build: FriendlyElec NanoPi R28S"
 # image from that exact commit and publishes it as a release with the image
 # attached. The release is created by the job itself, from GITHUB_TOKEN, so it
 # cannot trigger another workflow run in turn.
+#
+# Put 'edge' in the tag name to build the 7.2 kernel instead of 6.18. That is
+# the one worth booting when the device tree changes: the copy under
+# rockchip64-7.2/dt is byte-identical to the patch headed upstream, while the
+# 6.18 copy is renamed around Armbian's older USB2 PHY node labels.
 
 on:
   push:
@@ -51,7 +56,9 @@ jobs:
 
     env:
       BOARD: nanopi-r28s
-      BRANCH: ${{ inputs.kernel_branch || 'current' }}
+      # A tag with 'edge' in its name builds the 7.2 kernel; anything else
+      # builds current (6.18). Both are mainline.
+      BRANCH: ${{ inputs.kernel_branch || (contains(github.ref_name, 'edge') && 'edge') || 'current' }}
       RELEASE: ${{ inputs.userland || 'trixie' }}
       BUILD_MINIMAL: ${{ inputs.build_minimal || 'no' }}
       ENABLE_AIC8800: ${{ inputs.enable_aic8800 || 'no' }}
