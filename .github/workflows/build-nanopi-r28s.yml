@@ -170,7 +170,8 @@ jobs:
           img=$(basename output/images/*.img.xz)
           # Armbian-unofficial_<version>_<Board>_<userland>_<branch>_<kver>.img.xz
           version=$(echo "${img}" | cut -d_ -f2)
-          kver=$(echo "${img}" | sed -E 's/.*_([0-9]+\.[0-9]+\.[0-9]+)\.img\.xz$/\1/')
+          # Last field before the suffix, so an -rc kernel survives: 7.3.0-rc1
+          kver=$(echo "${img}" | sed -E 's/^.*_([^_]+)\.img\.xz$/\1/')
           title="Armbian ${version} - NanoPi R28S (${RELEASE}, ${BRANCH} ${kver})"
 
           {
