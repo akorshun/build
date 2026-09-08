@@ -5,8 +5,12 @@ name: "Probe: can a workflow create a release here"
 # releases fine in another fork of this account. This finds out which half of
 # that is true. Delete once answered.
 
+# workflow_dispatch is only offered for workflows on the default branch, and
+# this one lives on a board branch, so it runs on a push that touches itself.
 on:
-  workflow_dispatch:
+  push:
+    branches: [friendlyelec-nanopi-r28s]
+    paths: ['.github/workflows/probe-release-perm.yml']
 
 permissions:
   contents: write
